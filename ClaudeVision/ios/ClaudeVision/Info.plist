@@ -80,10 +80,6 @@
 		<string>claudevision://</string>
 		<key>MetaAppID</key>
 		<string>0</string>
-		<key>ClientToken</key>
-		<string></string>
-		<key>TeamID</key>
-		<string>$(DEVELOPMENT_TEAM)</string>
 		<key>Analytics</key>
 		<dict>
 			<key>OptOut</key>
