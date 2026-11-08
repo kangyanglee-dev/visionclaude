@@ -28,6 +28,7 @@ import type { ServerWebSocket } from 'bun'
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const PORT = Number(process.env.VISIONCLAUDE_PORT ?? 18790)
+const HOST = process.env.VISIONCLAUDE_HOST ?? '0.0.0.0'
 const STATE_DIR = join(homedir(), '.claude', 'channels', 'visionclaude')
 const INBOX_DIR = join(STATE_DIR, 'inbox')    // images from phone
 const OUTBOX_DIR = join(STATE_DIR, 'outbox')  // files from Claude
@@ -78,6 +79,30 @@ function unauthorized(): Response {
     { error: 'unauthorized', hint: 'Set the channel token in iOS app Settings → Channel Token' },
     { status: 401 }
   )
+}
+
+function normalizeSource(value: unknown): 'iphone' | 'rayban' {
+  return value === 'rayban' ? 'rayban' : 'iphone'
+}
+
+function isLoopbackAddress(address: string | undefined): boolean {
+  if (!address) return false
+  const normalized = address.toLowerCase()
+  if (normalized === '::1') return true
+  const ipv4 = normalized.startsWith('::ffff:') ? normalized.slice(7) : normalized
+  const octets = ipv4.split('.')
+  return octets.length === 4 && octets.every(part => /^\d{1,3}$/.test(part) && Number(part) <= 255) && Number(octets[0]) === 127
+}
+
+function safeOutboxFilename(raw: string): string | undefined {
+  let filename: string
+  try {
+    filename = decodeURIComponent(raw)
+  } catch {
+    return undefined
+  }
+  if (!filename || filename.includes('..') || /[\\/:\0]/.test(filename)) return undefined
+  return filename
 }
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -284,7 +309,7 @@ function mime(ext: string) {
 
 Bun.serve({
   port: PORT,
-  hostname: '0.0.0.0',  // allow LAN connections from phone
+  hostname: HOST,  // allow LAN connections from phone
   async fetch(req, server) {
     const url = new URL(req.url)
 
@@ -320,18 +345,20 @@ Bun.serve({
 
     // ── Token endpoint (localhost only — so user can grab it) ────────
     if (url.pathname === '/token') {
-      const reqHost = req.headers.get('host') ?? ''
-      const isLocal = reqHost.startsWith('localhost') || reqHost.startsWith('127.0.0.1')
-      if (!isLocal) {
-        return Response.json({ error: 'token only available from localhost' }, { status: 403 })
+      if (!isLoopbackAddress(server.requestIP(req)?.address)) {
+        return Response.json(
+          { error: 'token only available from localhost' },
+          { status: 403, headers: { 'cache-control': 'no-store' } },
+        )
       }
-      return Response.json({ token: CHANNEL_TOKEN })
+      return Response.json({ token: CHANNEL_TOKEN }, { headers: { 'cache-control': 'no-store' } })
     }
 
     // ── Serve files (TTS audio, attachments) ────────────────────────────
     if (url.pathname.startsWith('/files/')) {
-      const f = url.pathname.slice(7)
-      if (f.includes('..') || f.includes('/')) return new Response('bad', { status: 400 })
+      if (!checkAuth(req)) return unauthorized()
+      const f = safeOutboxFilename(url.pathname.slice(7))
+      if (!f) return new Response('bad', { status: 400 })
       try {
         return new Response(readFileSync(join(OUTBOX_DIR, f)), {
           headers: {
@@ -345,7 +372,7 @@ Bun.serve({
     }
 
     // ── Auth-protected endpoints ────────────────────────────────────────
-    if (['/upload', '/message', '/files/'].some(p => url.pathname.startsWith(p)) && !checkAuth(req)) {
+    if (['/upload', '/message'].some(p => url.pathname.startsWith(p)) && !checkAuth(req)) {
       return unauthorized()
     }
 
@@ -355,7 +382,7 @@ Bun.serve({
         const form = await req.formData()
         const id = String(form.get('id') ?? nextId())
         const text = String(form.get('text') ?? '')
-        const source = (String(form.get('source') ?? 'iphone')) as 'iphone' | 'rayban'
+        const source = normalizeSource(form.get('source'))
         const f = form.get('image') ?? form.get('file')
 
         let image: { path: string; name: string } | undefined
@@ -378,7 +405,7 @@ Bun.serve({
       return (async () => {
         const body = await req.json() as { text?: string; source?: string; id?: string }
         const id = body.id ?? nextId()
-        const source = (body.source ?? 'iphone') as 'iphone' | 'rayban'
+        const source = normalizeSource(body.source)
         const text = body.text ?? ''
         deliver(id, text, source)
         logActivity({ ts: new Date().toISOString(), direction: 'in', source, text: text.slice(0, 100) })
@@ -497,7 +524,7 @@ Bun.serve({
           image?: string  // base64
         }
         const id = msg.id ?? nextId()
-        const source = (msg.source ?? 'iphone') as 'iphone' | 'rayban'
+        const source = normalizeSource(msg.source)
 
         // If image is included as base64, save to disk
         let image: { path: string; name: string } | undefined
@@ -520,15 +547,16 @@ Bun.serve({
   },
 })
 
-log(`🚀 VisionClaude channel running on http://0.0.0.0:${PORT}`)
+log(`🚀 VisionClaude channel running on http://${HOST}:${PORT}`)
 log(`   WebSocket: ws://localhost:${PORT}/ws`)
 log(`   Health:    http://localhost:${PORT}/health`)
 log(`   Upload:    POST http://localhost:${PORT}/upload`)
 log(`   TTS:       ${ELEVENLABS_KEY ? '✅ ElevenLabs configured' : '❌ No ElevenLabs key'}`)
 log(``)
-log(`   🔐 Channel Token: ${CHANNEL_TOKEN}`)
 log(`   Dashboard:  http://localhost:${PORT}`)
 log(`   Enter token in iOS app → Settings → Channel Token`)
 
 // Auto-open dashboard in default browser
-Bun.spawn(['open', `http://localhost:${PORT}`], { stdout: 'ignore', stderr: 'ignore' })
+if (process.platform === 'darwin') {
+  Bun.spawn(['open', `http://localhost:${PORT}`], { stdout: 'ignore', stderr: 'ignore' })
+}

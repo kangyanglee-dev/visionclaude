@@ -46,7 +46,7 @@ class ClaudeBridge: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         reconnectAttempts = 0
 
         let wsURL = config.wsURL
-        print("[Bridge] Connecting WebSocket to \(wsURL)")
+        print("[Bridge] Connecting WebSocket")
 
         let session = URLSession(configuration: .default, delegate: self, delegateQueue: .main)
         self.urlSession = session

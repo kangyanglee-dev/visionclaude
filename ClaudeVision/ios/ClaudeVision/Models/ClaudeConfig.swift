@@ -20,9 +20,6 @@ struct ClaudeConfig: Codable {
         comps.host = gatewayHost
         comps.port = gatewayPort
         comps.path = "/ws"
-        if !channelToken.isEmpty {
-            comps.queryItems = [URLQueryItem(name: "token", value: channelToken)]
-        }
         return comps.url!
     }
 
