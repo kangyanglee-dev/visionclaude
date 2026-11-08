@@ -39,6 +39,7 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
     private var streamStateToken: AnyListenerToken?
     private var frameToken: AnyListenerToken?
     private var errorToken: AnyListenerToken?
+    private let videoFrameDecoder = GlassesVideoFrameDecoder()
     private var deviceMonitorTask: Task<Void, Never>?
     private var registrationTask: Task<Void, Never>?
     private var sessionSetupInProgress = false
@@ -49,12 +50,15 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
     private var frameInterval: TimeInterval = 1.0
     private var jpegQuality: CGFloat = 0.5
     private var lastCaptureTime: Date = .distantPast
+    private var appIsActive = UIApplication.shared.applicationState == .active
+    private var appLifecycleObservers: [NSObjectProtocol] = []
 
     // MARK: - Configuration
 
     func configure(frameInterval: TimeInterval = 1.0, jpegQuality: CGFloat = 0.5) {
         self.frameInterval = frameInterval
         self.jpegQuality = jpegQuality
+        videoFrameDecoder.updateSettings(appIsActive: appIsActive, minimumImageInterval: frameInterval)
     }
 
     // MARK: - Registration (MUST complete before streaming)
@@ -183,6 +187,7 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
     func start() throws {
         guard !isRunning else { return }
         guard deviceMonitorTask == nil else { return }
+        observeAppLifecycle()
 
         sessionGeneration += 1
         let generation = sessionGeneration
@@ -341,12 +346,13 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
         guard camera == nil else { return }
         guard let session = deviceSession else { return }
         do {
-            let config = StreamConfiguration(videoCodec: .raw, audioCodec: nil, resolution: .high, frameRate: 30)
+            let config = StreamConfiguration(videoCodec: .hvc1, audioCodec: nil, resolution: .high, frameRate: 30)
             guard let camera = try session.addCamera(config: config) else {
                 connectionStatus = .error("Meta DAT did not provide a camera for this device.")
                 return
             }
             self.camera = camera
+            let frameDecoder = videoFrameDecoder
             streamStateToken = camera.stream.statePublisher.listen { [weak self] state in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
@@ -367,18 +373,26 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
                 }
             }
             frameToken = camera.stream.videoFramePublisher.listen { [weak self] videoFrame in
-                guard let image = videoFrame.makeUIImage() else { return }
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    guard self.sessionGeneration == generation else { return }
-                    self.latestImage = image
-                    self.frameCount += 1
-                    let now = Date()
-                    if now.timeIntervalSince(self.lastCaptureTime) >= self.frameInterval {
-                        self.lastCaptureTime = now
-                        if let data = image.jpegData(compressionQuality: self.jpegQuality) {
-                            self.latestFrame = data
-                            print("[RayBan] Captured JPEG frame (\(data.count) bytes)")
+                frameDecoder.decode(videoFrame.sampleBuffer) { [weak self] result in
+                    Task { @MainActor [weak self] in
+                        guard let self, self.sessionGeneration == generation else { return }
+                        switch result {
+                        case .success(let image):
+                            guard let image else { return }
+                            self.connectionStatus = .connected
+                            self.latestImage = image
+                            self.frameCount += 1
+                            let now = Date()
+                            if now.timeIntervalSince(self.lastCaptureTime) >= self.frameInterval {
+                                self.lastCaptureTime = now
+                                if let data = image.jpegData(compressionQuality: self.jpegQuality) {
+                                    self.latestFrame = data
+                                    print("[RayBan] Captured JPEG frame (\(data.count) bytes)")
+                                }
+                            }
+                        case .failure(let error):
+                            print("[RayBan] HEVC decode failed: \(error.localizedDescription)")
+                            self.connectionStatus = .error("Glasses video decode failed: \(error.localizedDescription)")
                         }
                     }
                 }
@@ -408,6 +422,7 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
         sessionSetupInProgress = false
         camera?.stop()
         deviceSession?.stop()
+        videoFrameDecoder.reset()
         sessionStateToken = nil
         sessionErrorToken = nil
         streamStateToken = nil
@@ -422,6 +437,7 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
         latestImage = nil
         glassesName = "Not Connected"
         hasActiveDevice = false
+        removeAppLifecycleObservers()
     }
 
     func consumeFrame() -> Data? {
@@ -432,6 +448,36 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
         stop()
         registrationTask?.cancel()
         registrationTask = nil
+    }
+
+    private func observeAppLifecycle() {
+        guard appLifecycleObservers.isEmpty else { return }
+        appIsActive = UIApplication.shared.applicationState == .active
+        videoFrameDecoder.updateSettings(appIsActive: appIsActive, minimumImageInterval: frameInterval)
+        let center = NotificationCenter.default
+        appLifecycleObservers = [
+            center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.appIsActive = false
+                    self.videoFrameDecoder.updateSettings(appIsActive: false, minimumImageInterval: self.frameInterval)
+                }
+            },
+            center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.appIsActive = true
+                    self.videoFrameDecoder.updateSettings(appIsActive: true, minimumImageInterval: self.frameInterval)
+                }
+            }
+        ]
+    }
+
+    private func removeAppLifecycleObservers() {
+        for observer in appLifecycleObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        appLifecycleObservers.removeAll()
     }
 
 }
