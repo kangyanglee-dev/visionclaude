@@ -446,6 +446,27 @@ struct SettingsView: View {
                 .disabled(rayBanManager.isOpeningGlassesAppUpdate)
             }
 
+            if rayBanManager.isRegistered {
+                Button {
+                    Task { await rayBanManager.reconnectMetaRegistration() }
+                } label: {
+                    HStack(spacing: 14) {
+                        settingIcon("arrow.triangle.2.circlepath", color: accentColor)
+                        Text(rayBanManager.isUnregisteringForReconnect ? "Waiting for Meta AI confirmation…" : "Reconnect Meta Registration")
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        if rayBanManager.isUnregisteringForReconnect {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "arrow.up.right.square")
+                                .font(.subheadline)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+                .disabled(rayBanManager.isUnregisteringForReconnect)
+            }
+
             // Connect button
             if !rayBanManager.isRegistered {
                 Button {

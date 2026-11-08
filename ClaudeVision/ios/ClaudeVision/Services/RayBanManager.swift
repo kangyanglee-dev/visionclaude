@@ -28,6 +28,7 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
     @Published var compatibilityMessage: String?
     @Published var glassesAppUpdateRequired = false
     @Published var isOpeningGlassesAppUpdate = false
+    @Published var isUnregisteringForReconnect = false
 
     // DAT SDK
     private var deviceSession: DeviceSession?
@@ -66,19 +67,32 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
                 case .registered:
                     self.registrationState = "registered"
                     self.isRegistered = true
-                    self.registrationMessage = nil
+                    if !self.isUnregisteringForReconnect {
+                        self.registrationMessage = nil
+                    }
                     print("[RayBan] Registration complete")
                 case .registering:
                     self.registrationState = "registering"
-                    self.registrationMessage = "Waiting for Meta AI approval…"
+                    self.registrationMessage = self.isUnregisteringForReconnect
+                        ? "Waiting for Meta AI to confirm disconnecting VisionClaude…"
+                        : "Waiting for Meta AI approval…"
                     print("[RayBan] Registration in progress...")
                 case .available:
                     self.registrationState = "available"
                     self.isRegistered = false
+                    if self.isUnregisteringForReconnect {
+                        self.isUnregisteringForReconnect = false
+                        self.registrationMessage = "Registration reset. Tap Connect Glasses via Meta AI to register again."
+                    }
                 case .unavailable:
                     self.registrationState = "unavailable"
                     self.isRegistered = false
-                    self.registrationMessage = "DAT registration is unavailable. Check Meta AI and Developer Mode."
+                    if self.isUnregisteringForReconnect {
+                        self.isUnregisteringForReconnect = false
+                        self.registrationMessage = "Meta AI reports DAT registration unavailable. Check its confirmation, then tap Connect Glasses via Meta AI."
+                    } else {
+                        self.registrationMessage = "DAT registration is unavailable. Check Meta AI and Developer Mode."
+                    }
                 @unknown default:
                     break
                 }
@@ -136,6 +150,23 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
             registrationMessage = "Meta AI opened. Follow its App Connections instructions to update the app on your glasses, then tap Connect again."
         } catch {
             registrationMessage = "Could not open the glasses app update in Meta AI: \(error.localizedDescription)"
+        }
+    }
+
+    func reconnectMetaRegistration() async {
+        guard isRegistered, !isUnregisteringForReconnect else { return }
+
+        isUnregisteringForReconnect = true
+        registrationMessage = "Waiting for Meta AI to confirm disconnecting VisionClaude…"
+
+        do {
+            try await Wearables.shared.startUnregistration()
+            if isUnregisteringForReconnect {
+                registrationMessage = "Confirm removing VisionClaude in Meta AI. Return here after Meta AI confirms."
+            }
+        } catch {
+            isUnregisteringForReconnect = false
+            registrationMessage = "Could not start the Meta AI registration reset: \(error.localizedDescription)"
         }
     }
 
