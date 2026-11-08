@@ -40,6 +40,8 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
     private var registrationTask: Task<Void, Never>?
     private var sessionSetupInProgress = false
     private var sessionGeneration = 0
+    private var activeSessionGeneration: Int?
+    private var sessionErrorMessage: String?
 
     private var frameInterval: TimeInterval = 1.0
     private var jpegQuality: CGFloat = 0.5
@@ -205,6 +207,8 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
 
             let session = try wearables.createSession(deviceSelector: SpecificDeviceSelector(device: identifier))
             deviceSession = session
+            activeSessionGeneration = nil
+            sessionErrorMessage = nil
             registrationMessage = nil
 
             sessionStateToken = session.statePublisher.listen { [weak self] state in
@@ -213,24 +217,26 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
                     guard self.sessionGeneration == generation, self.deviceSession === session else { return }
                     print("[RayBan] Device session: \(state)")
                     if state == .started {
+                        self.activeSessionGeneration = generation
                         self.addCamera(generation: generation)
                     } else if state == .stopped {
-                        // The publisher may immediately replay its initial state.
-                        // Ignore a stale stopped event if the live session has moved on.
-                        guard session.state == .stopped else { return }
-                        self.sessionGeneration += 1
-                        self.isRunning = false
-                        self.camera = nil
-                        self.deviceSession = nil
-                        self.sessionStateToken = nil
-                        self.sessionErrorToken = nil
-                        self.streamStateToken = nil
-                        self.frameToken = nil
-                        self.errorToken = nil
-                        self.deviceMonitorTask?.cancel()
-                        self.deviceMonitorTask = nil
-                        self.deviceSelector = nil
-                        self.connectionStatus = .error("The glasses session stopped before video started. Tap Connect to retry, and make sure the glasses are awake.")
+                        // A terminal session event may arrive before its matching
+                        // error event. Let the error listener capture the cause first.
+                        guard self.activeSessionGeneration == generation else {
+                            print("[RayBan] Ignoring stopped state before session startup")
+                            return
+                        }
+                        Task { @MainActor [weak self] in
+                            try? await Task.sleep(for: .milliseconds(200))
+                            guard let self,
+                                  self.sessionGeneration == generation,
+                                  self.deviceSession === session,
+                                  self.activeSessionGeneration == generation else { return }
+                            self.finishStoppedSession()
+                        }
+                    } else if state == .starting || state == .paused || state == .stopping {
+                        self.activeSessionGeneration = generation
+                        self.connectionStatus = .connecting
                     } else {
                         self.connectionStatus = .connecting
                     }
@@ -240,11 +246,13 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
                 Task { @MainActor [weak self] in
                     guard let self else { return }
                     guard self.sessionGeneration == generation, self.deviceSession === session else { return }
+                    self.sessionErrorMessage = error.localizedDescription
                     self.connectionStatus = .error(error.localizedDescription)
                 }
             }
             try session.start()
             if session.state == .started {
+                activeSessionGeneration = generation
                 addCamera(generation: generation)
             }
         } catch {
@@ -252,6 +260,29 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
             print("[RayBan] Device session failed: \(message)")
             connectionStatus = .error(message)
         }
+    }
+
+    private func finishStoppedSession() {
+        sessionGeneration += 1
+        activeSessionGeneration = nil
+        isRunning = false
+        camera = nil
+        deviceSession = nil
+        sessionStateToken = nil
+        sessionErrorToken = nil
+        streamStateToken = nil
+        frameToken = nil
+        errorToken = nil
+        deviceMonitorTask?.cancel()
+        deviceMonitorTask = nil
+        deviceSelector = nil
+
+        if let reason = sessionErrorMessage {
+            connectionStatus = .error("Glasses session stopped: \(reason)")
+        } else {
+            connectionStatus = .error("Glasses session stopped before video started. Check that the glasses are awake and close to the iPhone, then tap Connect to retry.")
+        }
+        sessionErrorMessage = nil
     }
 
     private func addCamera(generation: Int) {
@@ -318,6 +349,8 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
     }
     func stop() {
         sessionGeneration += 1
+        activeSessionGeneration = nil
+        sessionErrorMessage = nil
         deviceMonitorTask?.cancel()
         deviceMonitorTask = nil
         sessionSetupInProgress = false

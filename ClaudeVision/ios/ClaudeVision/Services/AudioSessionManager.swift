@@ -15,17 +15,24 @@ class AudioSessionManager {
 
         // .allowBluetooth = HFP (Hands-Free Profile) — enables Bluetooth MIC INPUT
         // .allowBluetoothA2DP = A2DP — high-quality Bluetooth OUTPUT only
-        // .defaultToSpeaker = fallback to speaker when no Bluetooth connected
-        // We need BOTH for glasses: mic input (HFP) + audio output (A2DP)
+        // Keep HFP disabled during DAT camera sessions; opening its route can stop
+        // the glasses session. Speech then uses the iPhone's built-in microphone.
+        var options: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .allowBluetoothA2DP]
+        if !glassesCameraStreaming {
+            options.insert(.allowBluetooth)
+        }
         try session.setCategory(
             .playAndRecord,
-            mode: .voiceChat,
-            options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP]
+            mode: glassesCameraStreaming ? .default : .voiceChat,
+            options: options
         )
         try session.setActive(true)
 
-        // If Ray-Ban glasses are connected via Bluetooth, prefer their mic
-        routeToBluetoothMicIfAvailable()
+        if glassesCameraStreaming {
+            routeToBuiltInMic(session)
+        } else {
+            routeToBluetoothMicIfAvailable()
+        }
     }
 
     /// Route audio input to Bluetooth mic (glasses) if available
@@ -87,14 +94,33 @@ class AudioSessionManager {
     }
 
     func setGlassesCameraStreaming(_ active: Bool) {
+        guard glassesCameraStreaming != active else { return }
         glassesCameraStreaming = active
         if active {
-            print("[Audio] Glasses HFP routing paused while DAT camera is active")
-            if let builtInMic = AVAudioSession.sharedInstance().availableInputs?.first(where: { $0.portType == .builtInMic }) {
-                try? AVAudioSession.sharedInstance().setPreferredInput(builtInMic)
-            }
+            print("[Audio] Disabling Bluetooth HFP while DAT camera is active")
         } else {
-            routeToBluetoothMicIfAvailable()
+            print("[Audio] Re-enabling Bluetooth HFP after DAT camera mode")
+        }
+        // Reapply the category first; selecting the built-in input before this
+        // would still leave HFP enabled in AVAudioSession's active route options.
+        try? configureForVoiceChat()
+    }
+
+    private func routeToBuiltInMic(_ session: AVAudioSession) {
+        guard let builtInMic = session.availableInputs?.first(where: { $0.portType == .builtInMic }) else {
+            print("[Audio] Built-in iPhone microphone is not available")
+            return
+        }
+        do {
+            try session.setPreferredInput(builtInMic)
+            let hfpIsActive = session.currentRoute.inputs.contains { $0.portType == .bluetoothHFP }
+            if hfpIsActive {
+                print("[Audio] ERROR: Bluetooth HFP is still active during the DAT camera session")
+            } else {
+                print("[Audio] Using iPhone microphone; Bluetooth HFP is inactive")
+            }
+        } catch {
+            print("[Audio] Failed to select iPhone microphone: \(error.localizedDescription)")
         }
     }
 
