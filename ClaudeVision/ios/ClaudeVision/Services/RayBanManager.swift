@@ -39,6 +39,7 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
     private var deviceMonitorTask: Task<Void, Never>?
     private var registrationTask: Task<Void, Never>?
     private var sessionSetupInProgress = false
+    private var sessionGeneration = 0
 
     private var frameInterval: TimeInterval = 1.0
     private var jpegQuality: CGFloat = 0.5
@@ -134,6 +135,10 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
 
     func start() throws {
         guard !isRunning else { return }
+        guard deviceMonitorTask == nil else { return }
+
+        sessionGeneration += 1
+        let generation = sessionGeneration
 
         // Re-check registration state directly from SDK
         let currentState = Wearables.shared.registrationState
@@ -160,6 +165,7 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
         deviceMonitorTask = Task { @MainActor [weak self] in
             for await identifier in selector.activeDeviceStream() {
                 guard let self else { return }
+                guard self.sessionGeneration == generation else { return }
                 guard let identifier else {
                     self.hasActiveDevice = false
                     self.glassesName = "No Device"
@@ -171,20 +177,26 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
                 self.glassesName = device.nameOrId()
                 self.compatibilityMessage = device.compatibility().displayString
                 print("[RayBan] Found \(device.nameOrId()), type \(device.deviceType()), compatibility \(device.compatibility())")
-                await self.startSession(for: identifier, wearables: wearables)
+                await self.startSession(for: identifier, wearables: wearables, generation: generation)
             }
         }
     }
 
-    private func startSession(for identifier: DeviceIdentifier, wearables: any WearablesInterface) async {
+    private func startSession(for identifier: DeviceIdentifier, wearables: any WearablesInterface, generation: Int) async {
         guard deviceSession == nil, !sessionSetupInProgress else { return }
         sessionSetupInProgress = true
-        defer { sessionSetupInProgress = false }
+        defer {
+            if sessionGeneration == generation {
+                sessionSetupInProgress = false
+            }
+        }
         do {
             let permission = try await wearables.checkPermissionStatus(.camera)
+            guard sessionGeneration == generation, deviceMonitorTask != nil else { return }
             if permission != .granted {
                 registrationMessage = "Requesting camera permission in Meta AI…"
                 let result = try await wearables.requestPermission(.camera)
+                guard sessionGeneration == generation, deviceMonitorTask != nil else { return }
                 guard result == .granted else {
                     connectionStatus = .error("Camera permission was not granted in Meta AI.")
                     return
@@ -198,12 +210,27 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
             sessionStateToken = session.statePublisher.listen { [weak self] state in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
+                    guard self.sessionGeneration == generation, self.deviceSession === session else { return }
                     print("[RayBan] Device session: \(state)")
                     if state == .started {
-                        self.addCamera()
+                        self.addCamera(generation: generation)
                     } else if state == .stopped {
+                        // The publisher may immediately replay its initial state.
+                        // Ignore a stale stopped event if the live session has moved on.
+                        guard session.state == .stopped else { return }
+                        self.sessionGeneration += 1
                         self.isRunning = false
-                        self.connectionStatus = .disconnected
+                        self.camera = nil
+                        self.deviceSession = nil
+                        self.sessionStateToken = nil
+                        self.sessionErrorToken = nil
+                        self.streamStateToken = nil
+                        self.frameToken = nil
+                        self.errorToken = nil
+                        self.deviceMonitorTask?.cancel()
+                        self.deviceMonitorTask = nil
+                        self.deviceSelector = nil
+                        self.connectionStatus = .error("The glasses session stopped before video started. Tap Connect to retry, and make sure the glasses are awake.")
                     } else {
                         self.connectionStatus = .connecting
                     }
@@ -212,12 +239,13 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
             sessionErrorToken = session.errorPublisher.listen { [weak self] error in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
+                    guard self.sessionGeneration == generation, self.deviceSession === session else { return }
                     self.connectionStatus = .error(error.localizedDescription)
                 }
             }
             try session.start()
             if session.state == .started {
-                addCamera()
+                addCamera(generation: generation)
             }
         } catch {
             let message = error.localizedDescription
@@ -226,7 +254,7 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
         }
     }
 
-    private func addCamera() {
+    private func addCamera(generation: Int) {
         guard camera == nil else { return }
         guard let session = deviceSession else { return }
         do {
@@ -239,6 +267,7 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
             streamStateToken = camera.stream.statePublisher.listen { [weak self] state in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
+                    guard self.sessionGeneration == generation else { return }
                     print("[RayBan] Camera stream: \(state)")
                     switch state {
                     case .streaming:
@@ -258,6 +287,7 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
                 guard let image = videoFrame.makeUIImage() else { return }
                 Task { @MainActor [weak self] in
                     guard let self else { return }
+                    guard self.sessionGeneration == generation else { return }
                     self.latestImage = image
                     self.frameCount += 1
                     let now = Date()
@@ -273,6 +303,7 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
             errorToken = camera.stream.errorPublisher.listen { [weak self] error in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
+                    guard self.sessionGeneration == generation else { return }
                     let message = error.localizedDescription
                     print("[RayBan] Camera error: \(message)")
                     self.connectionStatus = .error(message)
@@ -286,6 +317,10 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
         }
     }
     func stop() {
+        sessionGeneration += 1
+        deviceMonitorTask?.cancel()
+        deviceMonitorTask = nil
+        sessionSetupInProgress = false
         camera?.stop()
         deviceSession?.stop()
         sessionStateToken = nil
@@ -293,10 +328,7 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
         streamStateToken = nil
         frameToken = nil
         errorToken = nil
-        deviceMonitorTask?.cancel()
-        deviceMonitorTask = nil
         deviceSession = nil
-        sessionSetupInProgress = false
         camera = nil
         deviceSelector = nil
         isRunning = false
