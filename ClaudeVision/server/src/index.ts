@@ -29,7 +29,7 @@ if (!isIP(GATEWAY_HOST) || isWildcardHost) {
   throw new Error("GATEWAY_HOST must be a specific IPv4 or IPv6 address; wildcard binds are disabled");
 }
 
-const DEFAULT_SYSTEM_PROMPT = `You are Claude, an AI vision assistant seeing the world through the user's camera (iPhone or Meta Ray-Ban smart glasses) in real-time.
+const DEFAULT_SYSTEM_PROMPT = `You are an OpenAI vision assistant seeing the world through the user's camera (iPhone or Meta Ray-Ban smart glasses) in real-time.
 
 VISION ANALYSIS:
 - You receive a live camera frame with each message. ALWAYS analyze the image carefully before responding.
@@ -48,8 +48,7 @@ RESPONSE STYLE:
 - Don't say "In the image I can see..." — just describe directly, like a friend would.
 
 TOOLS:
-- When the user asks you to do something that requires a tool (send email, check calendar, etc.), use the appropriate tool.
-- You can combine vision analysis with tool use (e.g., "read this business card and save the contact").`;
+- This isolated trial has no tools. Explain what the user can do next, but do not claim to perform actions.`;
 
 async function main() {
   // ── Show Banner ──
@@ -69,17 +68,17 @@ async function main() {
   // ── Server config ──
   const config: ServerConfig = {
     systemPrompt,
-    model: process.env.ANTHROPIC_MODEL || process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514",
+    model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
     maxTokens: 4096,
   };
 
-  // ── Initialize Claude Client ──
+  // ── Initialize OpenAI-backed vision client ──
   const claudeClient = new ClaudeClient(mcpManager, config);
 
   // ── Conversation store ──
   const conversations = new ConversationStore();
 
-  // ── Request queue (prevents concurrent Claude API races) ──
+  // ── Request queue (limits concurrent API calls) ──
   const requestQueue = new RequestQueue(2); // max 2 concurrent API calls
 
   // ── Express app ──

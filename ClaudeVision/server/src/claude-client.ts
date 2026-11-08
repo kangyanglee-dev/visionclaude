@@ -1,23 +1,49 @@
-import Anthropic from "@anthropic-ai/sdk";
 import type { MCPManager } from "./mcp-manager.js";
 import type {
   MessageParam,
-  ToolUseBlock,
-  ToolResultBlockParam,
   ServerConfig,
   ToolCallResult,
 } from "./types.js";
 
-const MAX_TOOL_ITERATIONS = 10;
+const OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions";
+
+type OpenAIContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
+type OpenAIMessage = {
+  role: "system" | "user" | "assistant";
+  content: string | OpenAIContentPart[];
+};
+
+function toOpenAIMessage(message: MessageParam): OpenAIMessage {
+  if (typeof message.content === "string") {
+    return { role: message.role, content: message.content };
+  }
+
+  const content: OpenAIContentPart[] = [];
+  for (const block of message.content) {
+    if (block.type === "text") {
+      content.push({ type: "text", text: block.text });
+    } else if (block.type === "image") {
+      if (block.source.type === "base64") {
+        content.push({
+          type: "image_url",
+          image_url: {
+            url: `data:${block.source.media_type};base64,${block.source.data}`,
+          },
+        });
+      }
+    }
+  }
+
+  return { role: message.role, content };
+}
 
 export class ClaudeClient {
-  private anthropic: Anthropic;
-  private mcpManager: MCPManager;
   private config: ServerConfig;
 
-  constructor(mcpManager: MCPManager, config: ServerConfig) {
-    this.anthropic = new Anthropic();
-    this.mcpManager = mcpManager;
+  constructor(_mcpManager: MCPManager, config: ServerConfig) {
     this.config = config;
   }
 
@@ -34,118 +60,53 @@ export class ClaudeClient {
     text: string,
     images?: string[]
   ): Promise<{ responseText: string; toolCalls: ToolCallResult[] }> {
-    // Build the user message content
-    const content: Anthropic.ContentBlockParam[] = [];
-
-    // Add images as vision content blocks
-    if (images && images.length > 0) {
-      for (const base64 of images) {
-        content.push({
-          type: "image",
-          source: {
-            type: "base64",
-            media_type: "image/jpeg",
-            data: base64,
-          },
-        });
-      }
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      throw new Error("OPENAI_API_KEY is not configured");
     }
 
-    // Add text
-    if (text) {
-      content.push({ type: "text", text });
-    }
-
-    // Append user message to history
-    const userMessage: MessageParam = { role: "user", content };
-    const messages = [...history, userMessage];
-
-    // Get tools from MCP
-    const tools = this.mcpManager.getToolsForClaude();
-
-    // Tool use loop
-    const allToolCalls: ToolCallResult[] = [];
-    let currentMessages = messages;
-
-    for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
-      const response = await this.anthropic.messages.create({
-        model: this.config.model,
-        max_tokens: this.config.maxTokens,
-        system: this.config.systemPrompt,
-        messages: currentMessages,
-        ...(tools.length > 0 ? { tools } : {}),
+    const userContent: OpenAIContentPart[] = [];
+    for (const base64 of images ?? []) {
+      userContent.push({
+        type: "image_url",
+        image_url: { url: `data:image/jpeg;base64,${base64}` },
       });
+    }
+    if (text) userContent.push({ type: "text", text });
 
-      // Check if response contains tool use
-      const toolUseBlocks = response.content.filter(
-        (block): block is ToolUseBlock => block.type === "tool_use"
-      );
+    const messages: OpenAIMessage[] = [
+      { role: "system", content: this.config.systemPrompt },
+      ...history.map(toOpenAIMessage),
+      { role: "user", content: userContent },
+    ];
 
-      if (toolUseBlocks.length === 0 || response.stop_reason === "end_turn") {
-        // Final response — extract text
-        const textBlocks = response.content
-          .filter((block) => block.type === "text")
-          .map((block) => (block as Anthropic.TextBlock).text);
+    // The isolated trial intentionally does not expose MCP tools to the model.
+    const response = await fetch(OPENAI_CHAT_COMPLETIONS_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: this.config.model,
+        messages,
+        max_tokens: this.config.maxTokens,
+      }),
+    });
 
-        const responseText = textBlocks.join("\n");
-
-        // Return the messages to append to history (user + assistant)
-        return { responseText, toolCalls: allToolCalls };
-      }
-
-      // Process tool calls
-      const assistantMessage: MessageParam = {
-        role: "assistant",
-        content: response.content,
-      };
-
-      const toolResults: ToolResultBlockParam[] = [];
-
-      for (const toolUse of toolUseBlocks) {
-        console.log(`[Claude] Tool call: ${toolUse.name}`);
-        try {
-          const result = await this.mcpManager.invokeTool(
-            toolUse.name,
-            toolUse.input as Record<string, unknown>
-          );
-          allToolCalls.push({ name: toolUse.name, result });
-          toolResults.push({
-            type: "tool_result",
-            tool_use_id: toolUse.id,
-            content: JSON.stringify(result),
-          });
-        } catch (err) {
-          const errorMsg =
-            err instanceof Error ? err.message : "Unknown error";
-          console.error(`[Claude] Tool error (${toolUse.name}):`, errorMsg);
-          allToolCalls.push({ name: toolUse.name, result: { error: errorMsg } });
-          toolResults.push({
-            type: "tool_result",
-            tool_use_id: toolUse.id,
-            content: JSON.stringify({ error: errorMsg }),
-            is_error: true,
-          });
-        }
-      }
-
-      const toolResultMessage: MessageParam = {
-        role: "user",
-        content: toolResults,
-      };
-
-      // Continue the loop with tool results
-      currentMessages = [
-        ...currentMessages,
-        assistantMessage,
-        toolResultMessage,
-      ];
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(`OpenAI API request failed (${response.status}): ${detail}`);
     }
 
-    // Exceeded max iterations
-    return {
-      responseText:
-        "I attempted to use several tools but reached the maximum number of iterations. Please try again with a simpler request.",
-      toolCalls: allToolCalls,
+    const payload = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string | null } }>;
     };
+    const responseText = payload.choices?.[0]?.message?.content;
+    if (typeof responseText !== "string") {
+      throw new Error("OpenAI API response did not contain assistant text");
+    }
+
+    return { responseText, toolCalls: [] };
   }
 }
