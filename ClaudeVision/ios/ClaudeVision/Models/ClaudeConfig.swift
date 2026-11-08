@@ -4,6 +4,7 @@ struct ClaudeConfig: Codable {
     var gatewayHost: String = "MR-DULA-SOLUTIONS.local"
     var gatewayPort: Int = 18790
     var gatewayUsesHTTPS: Bool = false
+    var connectionModeRawValue: String = "channel"
     var videoFrameInterval: TimeInterval = 1.0
     var videoJPEGQuality: Double = 0.85
     var speechPauseThreshold: TimeInterval = 1.5
@@ -38,6 +39,7 @@ struct ClaudeConfig: Codable {
         gatewayHost: String = "MR-DULA-SOLUTIONS.local",
         gatewayPort: Int = 18790,
         gatewayUsesHTTPS: Bool = false,
+        connectionModeRawValue: String = "channel",
         videoFrameInterval: TimeInterval = 1.0,
         videoJPEGQuality: Double = 0.85,
         speechPauseThreshold: TimeInterval = 1.5,
@@ -48,6 +50,7 @@ struct ClaudeConfig: Codable {
         self.gatewayHost = gatewayHost
         self.gatewayPort = gatewayPort
         self.gatewayUsesHTTPS = gatewayUsesHTTPS
+        self.connectionModeRawValue = connectionModeRawValue
         self.videoFrameInterval = videoFrameInterval
         self.videoJPEGQuality = videoJPEGQuality
         self.speechPauseThreshold = speechPauseThreshold
@@ -69,6 +72,7 @@ struct ClaudeConfig: Codable {
         case gatewayHost
         case gatewayPort
         case gatewayUsesHTTPS
+        case connectionModeRawValue
         case videoFrameInterval
         case videoJPEGQuality
         case speechPauseThreshold
@@ -82,6 +86,7 @@ struct ClaudeConfig: Codable {
         gatewayHost = try values.decodeIfPresent(String.self, forKey: .gatewayHost) ?? "MR-DULA-SOLUTIONS.local"
         gatewayPort = try values.decodeIfPresent(Int.self, forKey: .gatewayPort) ?? 18790
         gatewayUsesHTTPS = try values.decodeIfPresent(Bool.self, forKey: .gatewayUsesHTTPS) ?? false
+        connectionModeRawValue = try values.decodeIfPresent(String.self, forKey: .connectionModeRawValue) ?? "channel"
         videoFrameInterval = try values.decodeIfPresent(TimeInterval.self, forKey: .videoFrameInterval) ?? 1.0
         videoJPEGQuality = try values.decodeIfPresent(Double.self, forKey: .videoJPEGQuality) ?? 0.85
         speechPauseThreshold = try values.decodeIfPresent(TimeInterval.self, forKey: .speechPauseThreshold) ?? 1.5

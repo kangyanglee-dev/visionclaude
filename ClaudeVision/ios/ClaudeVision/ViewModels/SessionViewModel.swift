@@ -18,7 +18,15 @@ class SessionViewModel: ObservableObject {
     @Published var isConnected: Bool = false
     @Published var errorMessage: String?
     @Published var isProcessing: Bool = false
-    @Published var connectionMode: ClaudeBridge.ConnectionMode = .channel
+    @Published var glassesUploadStatus = "Waiting for a connection"
+    @Published var glassesUploadLastError: String?
+    @Published var connectionMode: ClaudeBridge.ConnectionMode = .channel {
+        didSet {
+            guard oldValue != connectionMode else { return }
+            config.connectionModeRawValue = connectionMode.rawValue
+            config.save()
+        }
+    }
 
     @Published var config: ClaudeConfig {
         didSet {
@@ -56,11 +64,16 @@ class SessionViewModel: ObservableObject {
     private var glassesUploadSequence = 0
     private var glassesUploadGeneration = 0
     private var glassesUploadInFlight = false
+    private var glassesUploadTask: Task<Void, Never>?
     private var lastGlassesUploadAt: Date?
 
     init(config: ClaudeConfig = ClaudeConfig.load()) {
+        let initialConnectionMode = ClaudeBridge.ConnectionMode(rawValue: config.connectionModeRawValue) ?? .channel
+        let bridge = ClaudeBridge(config: config)
+        bridge.mode = initialConnectionMode
         self.config = config
-        self.bridge = ClaudeBridge(config: config)
+        self.bridge = bridge
+        self.connectionMode = initialConnectionMode
         setupBindings()
         setupBridgeCallbacks()
         setupCodeDetection()
@@ -99,8 +112,18 @@ class SessionViewModel: ObservableObject {
 
         // Forward bridge connection state
         bridge.$isConnected
+            .dropFirst()
             .receive(on: RunLoop.main)
-            .assign(to: &$isConnected)
+            .sink { [weak self] connected in
+                guard let self else { return }
+                self.isConnected = connected
+                if connected {
+                    self.startGlassesFrameUploadStreamIfReady()
+                } else {
+                    self.stopGlassesFrameUploadStream()
+                }
+            }
+            .store(in: &cancellables)
 
         bridge.$mode
             .receive(on: RunLoop.main)
@@ -300,26 +323,47 @@ class SessionViewModel: ObservableObject {
         glassesUploadSequence = 0
         lastGlassesUploadAt = nil
         glassesUploadStreamID = UUID().uuidString
+        glassesUploadStatus = "Ready; waiting for a fresh Ray-Ban frame"
         print("[Session] Glasses frame upload stream started")
     }
 
     private func stopGlassesFrameUploadStream() {
-        guard glassesUploadStreamID != nil || glassesUploadInFlight else { return }
-        glassesUploadGeneration += 1
-        glassesUploadStreamID = nil
-        glassesUploadSequence = 0
-        lastGlassesUploadAt = nil
-        print("[Session] Glasses frame upload stream stopped")
+        if glassesUploadStreamID != nil || glassesUploadInFlight {
+            glassesUploadGeneration += 1
+            glassesUploadStreamID = nil
+            glassesUploadSequence = 0
+            lastGlassesUploadAt = nil
+            print("[Session] Glasses frame upload stream stopped")
+        }
+        glassesUploadStatus = glassesUploadReadinessStatus()
+    }
+
+    private func glassesUploadReadinessStatus() -> String {
+        if activeFrameSource != .rayBan { return "Idle; select Meta Ray-Ban as camera source" }
+        if !isConnected { return "Waiting for Gateway connection" }
+        if !rayBanManager.connectionStatus.isConnected { return "Waiting for glasses video stream" }
+        if config.channelToken.isEmpty { return "Waiting for Gateway key" }
+        return "Waiting for a fresh Ray-Ban frame"
     }
 
     private func uploadGlassesFrameIfReady(_ frame: Data) {
         guard activeFrameSource == .rayBan,
               isConnected,
-              rayBanManager.connectionStatus.isConnected,
-              !glassesUploadInFlight else { return }
+              rayBanManager.connectionStatus.isConnected else {
+            glassesUploadStatus = glassesUploadReadinessStatus()
+            return
+        }
+        guard !glassesUploadInFlight else { return }
+        guard !config.channelToken.isEmpty else {
+            glassesUploadStatus = "Waiting for Gateway key"
+            return
+        }
         startGlassesFrameUploadStreamIfReady()
         guard let streamID = glassesUploadStreamID else { return }
-        guard frame.count <= 1_048_576 else { return }
+        guard frame.count <= 1_048_576 else {
+            glassesUploadLastError = "Frame skipped: JPEG exceeds the 1 MiB limit"
+            return
+        }
 
         let now = Date()
         if let lastGlassesUploadAt, now.timeIntervalSince(lastGlassesUploadAt) < 1.0 { return }
@@ -328,21 +372,38 @@ class SessionViewModel: ObservableObject {
         lastGlassesUploadAt = now
         let sequence = glassesUploadSequence
         let generation = glassesUploadGeneration
-        Task { [weak self] in
+        glassesUploadStatus = "Uploading frame #\(sequence)…"
+        glassesUploadTask = Task { @MainActor [weak self] in
             guard let self else { return }
+            defer {
+                self.glassesUploadInFlight = false
+                self.glassesUploadTask = nil
+            }
             do {
-                try await self.bridge.uploadGlassesFrame(frame, streamID: streamID, sequence: sequence)
+                let statusCode = try await self.bridge.uploadGlassesFrame(frame, streamID: streamID, sequence: sequence)
                 if self.glassesUploadGeneration == generation,
                    self.glassesUploadStreamID == streamID,
                    self.glassesUploadSequence == sequence {
                     self.glassesUploadSequence += 1
+                    self.glassesUploadLastError = nil
+                    self.glassesUploadStatus = "Uploaded frame #\(sequence) (HTTP \(statusCode))"
                 }
             } catch {
-                // Frames are intentionally not queued or retried; the next fresh frame may be sent.
+                self.glassesUploadLastError = self.glassesUploadErrorDescription(error)
+                if self.glassesUploadGeneration == generation,
+                   self.glassesUploadStreamID == streamID {
+                    self.glassesUploadStatus = "Frame upload failed"
+                }
                 print("[Session] Glasses frame upload failed: \(error.localizedDescription)")
             }
-            self.glassesUploadInFlight = false
         }
+    }
+
+    private func glassesUploadErrorDescription(_ error: Error) -> String {
+        if let urlError = error as? URLError {
+            return "URLSession error \(urlError.code.rawValue): \(urlError.localizedDescription)"
+        }
+        return error.localizedDescription
     }
 
     private func startActiveFrameSource() {

@@ -124,6 +124,8 @@ struct ContentView: View {
                 activeFrameSource: $viewModel.activeFrameSource,
                 isConnected: viewModel.isConnected,
                 frameSourceStatus: viewModel.frameSourceStatus,
+                glassesUploadStatus: viewModel.glassesUploadStatus,
+                glassesUploadLastError: viewModel.glassesUploadLastError,
                 rayBanManager: viewModel.rayBanManager,
                 modeManager: viewModel.modeManager,
                 onConnect: { Task { await viewModel.connect() } },

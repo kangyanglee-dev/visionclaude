@@ -6,6 +6,8 @@ struct SettingsView: View {
     @Binding var activeFrameSource: FrameSourceType
     let isConnected: Bool
     let frameSourceStatus: FrameSourceStatus
+    let glassesUploadStatus: String
+    let glassesUploadLastError: String?
     @ObservedObject var rayBanManager: RayBanManager
     @ObservedObject var modeManager: ModeManager
     let onConnect: () -> Void
@@ -326,6 +328,25 @@ struct SettingsView: View {
                     Text(frameSourceStatus.label)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 14) {
+                    settingIcon("arrow.up.doc.fill", color: .purple)
+                    Text("Gateway Frame Upload")
+                    Spacer()
+                }
+                Text(glassesUploadStatus)
+                    .font(.caption)
+                    .foregroundStyle(glassesUploadStatus.hasPrefix("Uploaded") ? .green : .secondary)
+                    .padding(.leading, 50)
+                if let glassesUploadLastError {
+                    Text("Last error: \(glassesUploadLastError)")
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
+                        .padding(.leading, 50)
                 }
             }
 

@@ -213,7 +213,7 @@ class ClaudeBridge: NSObject, ObservableObject, URLSessionWebSocketDelegate {
 
     /// Publish one fresh Ray-Ban JPEG to the local gateway for on-demand MCP reads.
     /// This route does not call an AI provider.
-    func uploadGlassesFrame(_ image: Data, streamID: String, sequence: Int) async throws {
+    func uploadGlassesFrame(_ image: Data, streamID: String, sequence: Int) async throws -> Int {
         guard !config.channelToken.isEmpty else { throw ClaudeBridgeError.missingGatewayToken }
         guard image.count <= 1_048_576 else { throw ClaudeBridgeError.frameTooLarge }
         guard let url = config.baseURL?.appendingPathComponent("glasses/frame") else {
@@ -226,12 +226,17 @@ class ClaudeBridge: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         request.setValue(config.channelToken, forHTTPHeaderField: "X-Gateway-Key")
         request.setValue(streamID, forHTTPHeaderField: "X-Glasses-Stream-Id")
         request.setValue(String(sequence), forHTTPHeaderField: "X-Frame-Sequence")
+        request.timeoutInterval = 12
         request.httpBody = image
 
         let (_, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+        guard let http = response as? HTTPURLResponse else {
             throw ClaudeBridgeError.invalidResponse
         }
+        guard (200..<300).contains(http.statusCode) else {
+            throw ClaudeBridgeError.glassesUploadHTTPStatus(http.statusCode)
+        }
+        return http.statusCode
     }
 
     // MARK: - Gateway Mode (REST fallback)
@@ -327,6 +332,7 @@ enum ClaudeBridgeError: LocalizedError {
     case invalidGatewayAddress
     case frameTooLarge
     case missingGatewayToken
+    case glassesUploadHTTPStatus(Int)
     case serverError(statusCode: Int, message: String)
 
     var errorDescription: String? {
@@ -339,6 +345,8 @@ enum ClaudeBridgeError: LocalizedError {
             return "Glasses frame exceeds the 1 MB gateway limit"
         case .missingGatewayToken:
             return "Enter the gateway key in Channel Token settings"
+        case .glassesUploadHTTPStatus(let code):
+            return "Glasses frame upload returned HTTP \(code)"
         case .serverError(let code, let message):
             return "Server error (\(code)): \(message)"
         }
