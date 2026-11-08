@@ -2,23 +2,14 @@ import type { Request, Response, NextFunction } from "express";
 import { c } from "./console-theme.js";
 
 // ── Gateway Auth Middleware ──────────────────────────────────────────
-// Optional API key auth. If GATEWAY_API_KEY is set in .env, all
-// non-health endpoints require it via X-Gateway-Key header.
-// If not set, all requests are allowed (localhost-only use).
+// All gateway endpoints require a configured API key, including health.
 
 export function gatewayAuth() {
   const gatewayKey = process.env.GATEWAY_API_KEY || "";
 
   return (req: Request, res: Response, next: NextFunction): void => {
-    // Health endpoint is always public
-    if (req.path === "/health" || req.path === "/") {
-      next();
-      return;
-    }
-
-    // If no key configured, allow all (localhost mode)
     if (!gatewayKey) {
-      next();
+      res.status(503).json({ error: "Gateway authentication is not configured" });
       return;
     }
 

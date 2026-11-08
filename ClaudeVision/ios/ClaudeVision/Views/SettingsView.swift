@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @Binding var config: ClaudeConfig
+    @Binding var connectionMode: ClaudeBridge.ConnectionMode
     @Binding var activeFrameSource: FrameSourceType
     let isConnected: Bool
     let frameSourceStatus: FrameSourceStatus
@@ -77,6 +78,12 @@ struct SettingsView: View {
 
     private var connectionStatusSection: some View {
         Section {
+            Picker("Connection Mode", selection: $connectionMode) {
+                ForEach(ClaudeBridge.ConnectionMode.allCases, id: \.self) { mode in
+                    Text(mode.rawValue.capitalized).tag(mode)
+                }
+            }
+
             HStack(spacing: 14) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -136,7 +143,7 @@ struct SettingsView: View {
 
             HStack(spacing: 14) {
                 settingIcon("key.fill", color: .blue)
-                Text("Channel Token")
+                Text("Channel / Gateway Key")
                 Spacer()
                 SecureField("paste token", text: $config.channelToken)
                     .multilineTextAlignment(.trailing)
@@ -180,7 +187,7 @@ struct SettingsView: View {
                 .textCase(nil)
                 .font(.subheadline.weight(.semibold))
         } footer: {
-            Text("Enter the address of your VisionClaude gateway server. The channel token enables direct Claude Code integration.")
+            Text("Select Channel for Claude Code or Gateway for the standalone API. Gateway mode uses this key as GATEWAY_API_KEY.")
         }
     }
 

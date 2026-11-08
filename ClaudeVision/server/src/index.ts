@@ -12,8 +12,22 @@ import { createHealthRouter } from "./routes/health.js";
 import { createConfigRouter } from "./routes/config.js";
 import { createToolsRouter } from "./routes/tools.js";
 import type { ServerConfig } from "./types.js";
+import { isIP } from "net";
 
 const PORT = parseInt(process.env.PORT || "18790", 10);
+const GATEWAY_HOST = process.env.GATEWAY_HOST || "127.0.0.1";
+const TRIAL_SAFE_MODE = process.env.VISIONCLAUDE_TRIAL_SAFE_MODE !== "0";
+
+const canonicalIPv6Host = isIP(GATEWAY_HOST) === 6
+  ? new URL(`http://[${GATEWAY_HOST}]/`).hostname.toLowerCase()
+  : "";
+const isWildcardHost = GATEWAY_HOST === "0.0.0.0"
+  || canonicalIPv6Host === "[::]"
+  || canonicalIPv6Host === "[::ffff:0.0.0.0]";
+
+if (!isIP(GATEWAY_HOST) || isWildcardHost) {
+  throw new Error("GATEWAY_HOST must be a specific IPv4 or IPv6 address; wildcard binds are disabled");
+}
 
 const DEFAULT_SYSTEM_PROMPT = `You are Claude, an AI vision assistant seeing the world through the user's camera (iPhone or Meta Ray-Ban smart glasses) in real-time.
 
@@ -42,11 +56,11 @@ async function main() {
   showBanner();
 
   // ── Initialize MCP Manager ──
-  const mcpManager = new MCPManager();
+  const mcpManager = new MCPManager(TRIAL_SAFE_MODE);
   await mcpManager.initialize();
 
   // ── Initialize Skill Loader ──
-  const skillLoader = new SkillLoader();
+  const skillLoader = new SkillLoader(undefined, TRIAL_SAFE_MODE);
   skillLoader.load();
 
   // ── Build system prompt with skills ──
@@ -55,7 +69,7 @@ async function main() {
   // ── Server config ──
   const config: ServerConfig = {
     systemPrompt,
-    model: process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514",
+    model: process.env.ANTHROPIC_MODEL || process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514",
     maxTokens: 4096,
   };
 
@@ -71,11 +85,11 @@ async function main() {
   // ── Express app ──
   const app = express();
   app.use(cors());
-  app.use(express.json({ limit: "50mb" }));
 
   // ── Security middleware ──
-  app.use(gatewayAuth());    // Optional API key auth (set GATEWAY_API_KEY in .env)
+  app.use(gatewayAuth());
   app.use(rateLimiter(30));  // 30 requests per minute per IP
+  app.use(express.json({ limit: "50mb" }));
 
   // ── Routes ──
   app.use("/chat", createChatRouter(claudeClient, conversations, requestQueue));
@@ -105,7 +119,7 @@ async function main() {
   });
 
   // ── Start server ──
-  const server = app.listen(PORT, "0.0.0.0", () => {
+  const server = app.listen(PORT, GATEWAY_HOST, () => {
     const mcpServers = mcpManager.getServerNames();
     const toolCount = mcpManager.getToolsForClaude().length;
     showServerInfo(PORT, mcpServers.length, toolCount, skillLoader.count);

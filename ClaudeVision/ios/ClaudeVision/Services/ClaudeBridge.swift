@@ -10,7 +10,7 @@ class ClaudeBridge: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     @Published var isConnected: Bool = false
     @Published var mode: ConnectionMode = .channel
 
-    enum ConnectionMode: String {
+    enum ConnectionMode: String, CaseIterable {
         case channel  // WebSocket → Claude Code session
         case gateway  // REST → gateway server (fallback)
     }
@@ -209,12 +209,14 @@ class ClaudeBridge: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     // MARK: - Gateway Mode (REST fallback)
 
     func chatREST(text: String, images: [Data] = []) async throws -> ChatResponse {
+        guard !config.channelToken.isEmpty else { throw ClaudeBridgeError.missingGatewayToken }
         let base64Images = images.map { $0.base64EncodedString() }
         let request = ChatRequest(text: text, images: base64Images, conversation_id: conversationId)
 
         var urlRequest = URLRequest(url: config.chatURL)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue(config.channelToken, forHTTPHeaderField: "X-Gateway-Key")
         urlRequest.timeoutInterval = 60
         urlRequest.httpBody = try JSONEncoder().encode(request)
 
@@ -230,8 +232,14 @@ class ClaudeBridge: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     }
 
     func checkHealth() async throws -> HealthResponse {
-        let url = config.healthURL
-        let (data, _) = try await URLSession.shared.data(from: url)
+        guard !config.channelToken.isEmpty else { throw ClaudeBridgeError.missingGatewayToken }
+        var request = URLRequest(url: config.healthURL)
+        request.setValue(config.channelToken, forHTTPHeaderField: "X-Gateway-Key")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            let body = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw ClaudeBridgeError.serverError(statusCode: (response as? HTTPURLResponse)?.statusCode ?? 0, message: body)
+        }
         return try JSONDecoder().decode(HealthResponse.self, from: data)
     }
 
@@ -282,12 +290,15 @@ class ClaudeBridge: NSObject, ObservableObject, URLSessionWebSocketDelegate {
 
 enum ClaudeBridgeError: LocalizedError {
     case invalidResponse
+    case missingGatewayToken
     case serverError(statusCode: Int, message: String)
 
     var errorDescription: String? {
         switch self {
         case .invalidResponse:
             return "Invalid response from server"
+        case .missingGatewayToken:
+            return "Enter the gateway key in Channel Token settings"
         case .serverError(let code, let message):
             return "Server error (\(code)): \(message)"
         }

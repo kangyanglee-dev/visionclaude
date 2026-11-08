@@ -24,7 +24,14 @@ export class MCPManager {
   private servers = new Map<string, ConnectedServer>();
   private toolToServer = new Map<string, string>(); // toolName → serverName
 
+  constructor(private disabled = false) {}
+
   async initialize(configPath?: string): Promise<void> {
+    if (this.disabled) {
+      console.log(c.label("[MCP]") + c.dim(" Disabled for isolated gateway trial"));
+      return;
+    }
+
     const config = await this.loadConfig(configPath);
     const serverEntries = Object.entries(config);
 
@@ -224,6 +231,10 @@ export class MCPManager {
     toolName: string,
     args: Record<string, unknown>
   ): Promise<unknown> {
+    if (this.disabled) {
+      throw new Error("MCP tools are disabled for the isolated gateway trial");
+    }
+
     const serverName = this.toolToServer.get(toolName);
     if (!serverName) {
       throw new Error(`Unknown tool: ${toolName}`);
@@ -247,6 +258,8 @@ export class MCPManager {
   }
 
   getToolsForClaude(): Tool[] {
+    if (this.disabled) return [];
+
     const tools: Tool[] = [];
     for (const server of this.servers.values()) {
       for (const tool of server.tools) {
@@ -261,6 +274,8 @@ export class MCPManager {
   }
 
   getAllDiscoveredTools(): DiscoveredTool[] {
+    if (this.disabled) return [];
+
     const all: DiscoveredTool[] = [];
     for (const server of this.servers.values()) {
       all.push(...server.tools);

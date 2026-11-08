@@ -124,8 +124,10 @@ export class SkillLoader {
   private skills: Map<string, Skill> = new Map();
   private searchPaths: string[];
 
-  constructor(extraPaths?: string[]) {
-    this.searchPaths = [...SKILL_SEARCH_PATHS, ...(extraPaths || [])];
+  constructor(extraPaths?: string[], trialSafeMode = false) {
+    this.searchPaths = trialSafeMode
+      ? SKILL_SEARCH_PATHS.slice(0, 2)
+      : [...SKILL_SEARCH_PATHS, ...(extraPaths || [])];
   }
 
   /**

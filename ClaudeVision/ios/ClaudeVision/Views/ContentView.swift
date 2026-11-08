@@ -120,6 +120,7 @@ struct ContentView: View {
         .sheet(isPresented: $showSettings) {
             SettingsView(
                 config: $viewModel.config,
+                connectionMode: $viewModel.connectionMode,
                 activeFrameSource: $viewModel.activeFrameSource,
                 isConnected: viewModel.isConnected,
                 frameSourceStatus: viewModel.frameSourceStatus,

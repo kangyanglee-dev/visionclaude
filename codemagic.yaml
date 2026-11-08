@@ -51,3 +51,30 @@ workflows:
         auth: integration
         submit_to_testflight: false
         submit_to_app_store: false
+
+  ios-usb-test:
+    name: VisionClaude USB ad hoc test
+    max_build_duration: 60
+    integrations:
+      app_store_connect: Apple Developer
+    environment:
+      xcode: latest
+      ios_signing:
+        distribution_type: ad_hoc
+        bundle_identifier: com.kangyanglee.visionclaude
+    scripts:
+      - name: Generate Xcode project
+        script: |
+          brew install xcodegen
+          cd ClaudeVision/ios
+          xcodegen generate
+      - name: Apply signing profile
+        script: |
+          cd ClaudeVision/ios
+          xcode-project use-profiles
+      - name: Build iPhone IPA
+        script: |
+          cd ClaudeVision/ios
+          xcode-project build-ipa --project ClaudeVision.xcodeproj --scheme ClaudeVision
+    artifacts:
+      - ClaudeVision/ios/build/ios/ipa/*.ipa

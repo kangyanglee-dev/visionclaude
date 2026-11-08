@@ -189,9 +189,26 @@ class SessionViewModel: ObservableObject {
 
     func connect() async {
         errorMessage = nil
+        bridge.disconnect()
+        bridge.mode = connectionMode
 
-        // Try channel mode first (WebSocket -> Claude Code session)
-        bridge.mode = .channel
+        if connectionMode == .gateway {
+            do {
+                let health = try await bridge.checkHealth()
+                guard health.status == "ok" else { throw ClaudeBridgeError.invalidResponse }
+                bridge.isConnected = true
+                state = .idle
+                try? AudioSessionManager.shared.configureForVoiceChat()
+                startActiveFrameSource()
+            } catch {
+                bridge.isConnected = false
+                errorMessage = error.localizedDescription
+                state = .disconnected
+            }
+            return
+        }
+
+        // Channel mode uses the Claude Code WebSocket.
         bridge.connectWebSocket()
 
         // Also check health endpoint for status
