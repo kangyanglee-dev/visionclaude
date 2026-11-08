@@ -26,6 +26,8 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
     @Published var registrationMessage: String?
     @Published var sdkConfigurationMessage: String? = UserDefaults.standard.string(forKey: "DATConfigurationError")
     @Published var compatibilityMessage: String?
+    @Published var glassesAppUpdateRequired = false
+    @Published var isOpeningGlassesAppUpdate = false
 
     // DAT SDK
     private var deviceSession: DeviceSession?
@@ -122,6 +124,18 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
             print("[RayBan] Registration error: \(details)")
             registrationMessage = details
             connectionStatus = .error("Registration failed: \(details)")
+        }
+    }
+
+    func openGlassesAppUpdate() async {
+        isOpeningGlassesAppUpdate = true
+        defer { isOpeningGlassesAppUpdate = false }
+
+        do {
+            try await Wearables.shared.openDATGlassesAppUpdate()
+            registrationMessage = "Meta AI opened. Follow its App Connections instructions to update the app on your glasses, then tap Connect again."
+        } catch {
+            registrationMessage = "Could not open the glasses app update in Meta AI: \(error.localizedDescription)"
         }
     }
 
@@ -247,6 +261,9 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
                     guard let self else { return }
                     guard self.sessionGeneration == generation, self.deviceSession === session else { return }
                     self.sessionErrorMessage = error.localizedDescription
+                    if error == .datAppOnTheGlassesUpdateRequired {
+                        self.glassesAppUpdateRequired = true
+                    }
                     self.connectionStatus = .error(error.localizedDescription)
                 }
             }
@@ -258,6 +275,10 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
         } catch {
             let message = error.localizedDescription
             print("[RayBan] Device session failed: \(message)")
+            if let sessionError = error as? DeviceSessionError,
+               sessionError == .datAppOnTheGlassesUpdateRequired {
+                glassesAppUpdateRequired = true
+            }
             connectionStatus = .error(message)
         }
     }

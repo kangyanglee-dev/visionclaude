@@ -425,6 +425,27 @@ struct SettingsView: View {
                     .foregroundStyle(compatibility.lowercased().contains("update required") ? .orange : .secondary)
             }
 
+            if rayBanManager.glassesAppUpdateRequired {
+                Button {
+                    Task { await rayBanManager.openGlassesAppUpdate() }
+                } label: {
+                    HStack(spacing: 14) {
+                        settingIcon("arrow.up.circle.fill", color: .orange)
+                        Text(rayBanManager.isOpeningGlassesAppUpdate ? "Opening Meta AI…" : "Update App on Glasses")
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        if rayBanManager.isOpeningGlassesAppUpdate {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "arrow.up.right.square")
+                                .font(.subheadline)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+                .disabled(rayBanManager.isOpeningGlassesAppUpdate)
+            }
+
             // Connect button
             if !rayBanManager.isRegistered {
                 Button {
