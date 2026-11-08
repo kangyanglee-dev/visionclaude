@@ -1,0 +1,20 @@
+workflows:
+  ios-simulator:
+    name: VisionClaude simulator compilation
+    max_build_duration: 60
+    environment:
+      xcode: latest
+    scripts:
+      - name: Generate Xcode project
+        script: |
+          brew install xcodegen
+          cd ClaudeVision/ios
+          xcodegen generate
+      - name: Compile for iOS simulator
+        script: |
+          cd ClaudeVision/ios
+          xcodebuild build -project ClaudeVision.xcodeproj -scheme ClaudeVision \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug CODE_SIGNING_ALLOWED=NO
+    artifacts:
+      - /tmp/xcodebuild_logs/*.log
