@@ -6,7 +6,7 @@ struct SettingsView: View {
     @Binding var activeFrameSource: FrameSourceType
     let isConnected: Bool
     let frameSourceStatus: FrameSourceStatus
-    let rayBanManager: RayBanManager
+    @ObservedObject var rayBanManager: RayBanManager
     @ObservedObject var modeManager: ModeManager
     let onConnect: () -> Void
     let onConnectGlasses: () -> Void
@@ -402,9 +402,21 @@ struct SettingsView: View {
                 settingIcon("person.badge.key", color: .mint)
                 Text("Registration")
                 Spacer()
-                Text(rayBanManager.isRegistered ? "Registered" : "Not Registered")
+                Text(rayBanManager.registrationState.capitalized)
                     .font(.subheadline)
                     .foregroundStyle(rayBanManager.isRegistered ? .green : accentColor)
+            }
+
+            if let message = rayBanManager.registrationMessage {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(rayBanManager.registrationState == "unavailable" ? .red : .secondary)
+            }
+
+            if let message = rayBanManager.sdkConfigurationMessage {
+                Text("DAT SDK configuration: \(message)")
+                    .font(.caption)
+                    .foregroundStyle(.red)
             }
 
             // Connect button
@@ -415,7 +427,7 @@ struct SettingsView: View {
                 } label: {
                     HStack(spacing: 14) {
                         settingIcon("link.circle.fill", color: accentColor)
-                        Text("Connect Glasses via Meta AI")
+                        Text(rayBanManager.registrationState == "registering" ? "Waiting for Meta AI…" : "Connect Glasses via Meta AI")
                             .foregroundStyle(.primary)
                         Spacer()
                         Image(systemName: "arrow.up.right.square")

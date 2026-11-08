@@ -6,9 +6,13 @@ struct ClaudeVisionApp: App {
     init() {
         do {
             try Wearables.configure()
+            UserDefaults.standard.removeObject(forKey: "DATConfigurationError")
             print("[App] DAT SDK configured")
         } catch {
-            print("[App] DAT SDK configuration failed: \(error)")
+            let nsError = error as NSError
+            let details = "\(nsError.domain) (code \(nsError.code)): \(nsError.localizedDescription)"
+            UserDefaults.standard.set(details, forKey: "DATConfigurationError")
+            print("[App] DAT SDK configuration failed: \(details)")
         }
     }
 
@@ -24,7 +28,7 @@ struct ClaudeVisionApp: App {
                         return // Not a DAT SDK callback
                     }
 
-                    print("[App] Received DAT SDK callback: \(url)")
+                    print("[App] Received DAT SDK callback")
                     Task {
                         do {
                             _ = try await Wearables.shared.handleUrl(url)

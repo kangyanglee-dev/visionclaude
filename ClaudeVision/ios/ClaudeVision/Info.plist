@@ -78,8 +78,6 @@
 	<dict>
 		<key>AppLinkURLScheme</key>
 		<string>claudevision://</string>
-		<key>MetaAppID</key>
-		<string>0</string>
 		<key>Analytics</key>
 		<dict>
 			<key>OptOut</key>

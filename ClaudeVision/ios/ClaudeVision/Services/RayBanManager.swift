@@ -23,6 +23,8 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
     @Published var hasActiveDevice: Bool = false
     @Published var registrationState: String = "unregistered"
     @Published var isRegistered: Bool = false
+    @Published var registrationMessage: String?
+    @Published var sdkConfigurationMessage: String? = UserDefaults.standard.string(forKey: "DATConfigurationError")
 
     // DAT SDK
     private var streamSession: StreamSession?
@@ -54,14 +56,19 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
                 case .registered:
                     self.registrationState = "registered"
                     self.isRegistered = true
+                    self.registrationMessage = nil
                     print("[RayBan] Registration complete")
                 case .registering:
                     self.registrationState = "registering"
+                    self.registrationMessage = "Waiting for Meta AI approval…"
                     print("[RayBan] Registration in progress...")
-                case .available, .unavailable:
-                    self.registrationState = "unregistered"
+                case .available:
+                    self.registrationState = "available"
                     self.isRegistered = false
-                    print("[RayBan] Not registered")
+                case .unavailable:
+                    self.registrationState = "unavailable"
+                    self.isRegistered = false
+                    self.registrationMessage = "DAT registration is unavailable. Check Meta AI and Developer Mode."
                 @unknown default:
                     break
                 }
@@ -76,8 +83,11 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
             registrationState = "registered"
         case .registering:
             registrationState = "registering"
-        case .available, .unavailable:
-            registrationState = "unregistered"
+        case .available:
+            registrationState = "available"
+        case .unavailable:
+            registrationState = "unavailable"
+            registrationMessage = "DAT registration is unavailable. Check Meta AI and Developer Mode."
         @unknown default:
             break
         }
@@ -91,12 +101,28 @@ class RayBanManager: NSObject, ObservableObject, FrameSource {
 
         do {
             print("[RayBan] Starting registration with Meta AI...")
+            registrationMessage = "Opening Meta AI for approval…"
             connectionStatus = .connecting
             try await Wearables.shared.startRegistration()
+            if Wearables.shared.registrationState == .registering {
+                registrationMessage = "Waiting for Meta AI approval…"
+            } else if Wearables.shared.registrationState != .registered {
+                registrationMessage = "Registration was requested, but Meta AI has not approved this app yet."
+            }
         } catch {
-            print("[RayBan] Registration error: \(error)")
-            connectionStatus = .error("Registration failed: \(error.localizedDescription)")
+            let details = registrationErrorDescription(error)
+            print("[RayBan] Registration error: \(details)")
+            registrationMessage = details
+            connectionStatus = .error("Registration failed: \(details)")
         }
+    }
+
+    private func registrationErrorDescription(_ error: Error) -> String {
+        let nsError = error as NSError
+        if nsError.domain == "MWDATCore.RegistrationError", nsError.code == 1 {
+            return "Meta DAT rejected the registration configuration (configurationInvalid, code 1). Check the app ID, callback scheme, and the SDK's development-mode configuration."
+        }
+        return "\(nsError.domain) (code \(nsError.code)): \(nsError.localizedDescription)"
     }
 
     // MARK: - FrameSource Implementation
