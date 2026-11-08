@@ -202,10 +202,32 @@ private enum DecodeError: LocalizedError {
 
 private extension CMSampleBuffer {
     var isHEVCKeyframe: Bool {
-        guard let attachments = CMSampleBufferGetSampleAttachmentsArray(self, createIfNecessary: false) as? [[CFString: Any]],
-              let first = attachments.first else {
-            return false
+        guard let dataBuffer = CMSampleBufferGetDataBuffer(self) else { return false }
+        let totalLength = CMBlockBufferGetDataLength(dataBuffer)
+        var offset = 0
+
+        // DAT's HEVC samples use HVCC framing. The SDK may omit sync-sample
+        // attachments, so inspect the NAL headers instead of treating a missing
+        // attachment as proof that the frame is a keyframe.
+        while offset + 4 < totalLength {
+            var nalLengthBE: UInt32 = 0
+            guard CMBlockBufferCopyDataBytes(dataBuffer, atOffset: offset, dataLength: 4,
+                                             destination: &nalLengthBE) == kCMBlockBufferNoErr else {
+                break
+            }
+            let nalLength = Int(UInt32(bigEndian: nalLengthBE))
+            offset += 4
+            guard nalLength > 0, offset + nalLength <= totalLength else { break }
+
+            var nalHeader: UInt8 = 0
+            guard CMBlockBufferCopyDataBytes(dataBuffer, atOffset: offset, dataLength: 1,
+                                             destination: &nalHeader) == kCMBlockBufferNoErr else {
+                break
+            }
+            let nalUnitType = (nalHeader >> 1) & 0x3F
+            if (16...21).contains(nalUnitType) { return true }
+            offset += nalLength
         }
-        return (first[kCMSampleAttachmentKey_NotSync] as? Bool) != true
+        return false
     }
 }
