@@ -124,6 +124,7 @@ class SessionViewModel: ObservableObject {
                 if status == "connected" {
                     self.state = .idle
                     self.errorMessage = nil
+                    AudioSessionManager.shared.setGlassesCameraStreaming(self.activeFrameSource == .rayBan)
                     try? AudioSessionManager.shared.configureForVoiceChat()
                     self.startActiveFrameSource()
                 }
@@ -204,6 +205,7 @@ class SessionViewModel: ObservableObject {
                 guard health.status == "ok" else { throw ClaudeBridgeError.invalidResponse }
                 bridge.isConnected = true
                 state = .idle
+                AudioSessionManager.shared.setGlassesCameraStreaming(activeFrameSource == .rayBan)
                 try? AudioSessionManager.shared.configureForVoiceChat()
                 startActiveFrameSource()
             } catch {
@@ -249,20 +251,15 @@ class SessionViewModel: ObservableObject {
         rayBanManager.stop()
 
         if activeFrameSource == .rayBan {
-            // Reconfigure audio session for Bluetooth, then route mic
+            AudioSessionManager.shared.setGlassesCameraStreaming(true)
             try? AudioSessionManager.shared.configureForVoiceChat()
-            // Retry mic routing after DAT SDK has had time to set up streaming
-            // The SDK may reset the audio route when it starts
-            for delay in [0.5, 1.5, 3.0] {
-                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                    AudioSessionManager.shared.routeToBluetoothMicIfAvailable()
-                }
-            }
             if isConnected && !speechManager.isListening {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
                     self?.startListening()
                 }
             }
+        } else {
+            AudioSessionManager.shared.setGlassesCameraStreaming(false)
         }
         startActiveFrameSource()
     }

@@ -419,6 +419,12 @@ struct SettingsView: View {
                     .foregroundStyle(.red)
             }
 
+            if let compatibility = rayBanManager.compatibilityMessage {
+                Text("Device compatibility: \(compatibility)")
+                    .font(.caption)
+                    .foregroundStyle(compatibility.lowercased().contains("update required") ? .orange : .secondary)
+            }
+
             // Connect button
             if !rayBanManager.isRegistered {
                 Button {

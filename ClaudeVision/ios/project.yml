@@ -2,13 +2,13 @@ name: ClaudeVision
 options:
   bundleIdPrefix: com.claudevision
   deploymentTarget:
-    iOS: "17.0"
-  xcodeVersion: "26.0"
+    iOS: "17.2"
+  xcodeVersion: "26.4"
 
 packages:
   meta-wearables-dat-ios:
     url: https://github.com/facebook/meta-wearables-dat-ios
-    exactVersion: "0.5.0"
+    exactVersion: "1.0.1"
 
 targets:
   ClaudeVision:

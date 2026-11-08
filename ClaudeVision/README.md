@@ -235,7 +235,7 @@ Restart the gateway after changes: `lsof -ti:18790 | xargs kill -9 && npm start`
 5. In VisionClaude: Settings → **Connect Glasses via Meta AI** → Approve
 6. Switch camera source to **Meta Ray-Ban**
 
-The DAT SDK is included via SPM from [facebook/meta-wearables-dat-ios](https://github.com/facebook/meta-wearables-dat-ios).
+The DAT SDK 1.0.1 is included via SPM from [facebook/meta-wearables-dat-ios](https://github.com/facebook/meta-wearables-dat-ios) and requires iOS 17.2 or later. VisionClaude uses the iPhone microphone while the glasses camera stream is active; test glasses HFP audio separately because switching audio routes can interrupt a DAT session.
 
 By using the Wearables Device Access Toolkit, you agree to the [Meta Wearables Developer Terms](https://wearables.developer.meta.com/terms) and [Acceptable Use Policy](https://wearables.developer.meta.com/acceptable-use-policy).
 

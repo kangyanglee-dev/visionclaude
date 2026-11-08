@@ -3,6 +3,7 @@ import AVFoundation
 
 class AudioSessionManager {
     static let shared = AudioSessionManager()
+    private var glassesCameraStreaming = false
 
     private init() {
         setupNotifications()
@@ -29,6 +30,10 @@ class AudioSessionManager {
 
     /// Route audio input to Bluetooth mic (glasses) if available
     func routeToBluetoothMicIfAvailable() {
+        guard !glassesCameraStreaming else {
+            print("[Audio] Keeping iPhone mic while DAT camera session is active")
+            return
+        }
         let session = AVAudioSession.sharedInstance()
         guard let availableInputs = session.availableInputs else {
             print("[Audio] No available inputs found")
@@ -79,6 +84,18 @@ class AudioSessionManager {
         }
 
         print("[Audio] No Bluetooth mic found — using iPhone mic")
+    }
+
+    func setGlassesCameraStreaming(_ active: Bool) {
+        glassesCameraStreaming = active
+        if active {
+            print("[Audio] Glasses HFP routing paused while DAT camera is active")
+            if let builtInMic = AVAudioSession.sharedInstance().availableInputs?.first(where: { $0.portType == .builtInMic }) {
+                try? AVAudioSession.sharedInstance().setPreferredInput(builtInMic)
+            }
+        } else {
+            routeToBluetoothMicIfAvailable()
+        }
     }
 
     func deactivate() {
