@@ -18,3 +18,36 @@ workflows:
             -configuration Debug CODE_SIGNING_ALLOWED=NO
     artifacts:
       - /tmp/xcodebuild_logs/*.log
+
+  ios-testflight-archive:
+    name: VisionClaude signed App Store archive and TestFlight upload
+    max_build_duration: 60
+    integrations:
+      app_store_connect: Apple Developer
+    environment:
+      xcode: latest
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.kangyanglee.visionclaude
+    scripts:
+      - name: Generate Xcode project
+        script: |
+          brew install xcodegen
+          cd ClaudeVision/ios
+          xcodegen generate
+      - name: Apply App Store signing profile
+        script: |
+          cd ClaudeVision/ios
+          xcode-project use-profiles
+      - name: Build signed IPA
+        script: |
+          cd ClaudeVision/ios
+          xcode-project build-ipa --project ClaudeVision.xcodeproj --scheme ClaudeVision
+    artifacts:
+      - ClaudeVision/ios/build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: false
+        submit_to_app_store: false
