@@ -117,6 +117,11 @@ struct SettingsView: View {
 
     private var serverSection: some View {
         Section {
+            Picker("Transport", selection: $config.gatewayUsesHTTPS) {
+                Text("HTTP").tag(false)
+                Text("HTTPS").tag(true)
+            }
+
             HStack(spacing: 14) {
                 settingIcon("server.rack", color: .blue)
                 Text("Host")
@@ -187,7 +192,7 @@ struct SettingsView: View {
                 .textCase(nil)
                 .font(.subheadline.weight(.semibold))
         } footer: {
-            Text("Select Channel for Claude Code or Gateway for the standalone API. Gateway mode uses this key as GATEWAY_API_KEY.")
+            Text("For a Cloudflare Worker, choose HTTPS, enter its hostname, and use port 443. Keep HTTP and port 18790 for the local gateway. Select Channel for Claude Code or Gateway for the standalone API; Gateway mode uses this key as GATEWAY_API_KEY.")
         }
     }
 

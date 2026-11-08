@@ -11,6 +11,7 @@ import { createChatRouter } from "./routes/chat.js";
 import { createHealthRouter } from "./routes/health.js";
 import { createConfigRouter } from "./routes/config.js";
 import { createToolsRouter } from "./routes/tools.js";
+import { createGlassesRouter, createGlassesUploadRouter } from "./routes/glasses.js";
 import type { ServerConfig } from "./types.js";
 import { isIP } from "net";
 
@@ -87,6 +88,9 @@ async function main() {
 
   // ── Security middleware ──
   app.use(gatewayAuth());
+  // Camera uploads have a 1 MiB body cap and a bounded 2 req/sec limiter, so
+  // they do not consume the general 30/min API quota.
+  app.use("/glasses", createGlassesUploadRouter());
   app.use(rateLimiter(30));  // 30 requests per minute per IP
   app.use(express.json({ limit: "50mb" }));
 
@@ -95,6 +99,7 @@ async function main() {
   app.use("/health", createHealthRouter(mcpManager, conversations, skillLoader));
   app.use("/config", createConfigRouter(claudeClient));
   app.use("/tools", createToolsRouter(mcpManager));
+  app.use("/glasses", createGlassesRouter());
 
   // Skills endpoint
   app.get("/skills", (_req, res) => {

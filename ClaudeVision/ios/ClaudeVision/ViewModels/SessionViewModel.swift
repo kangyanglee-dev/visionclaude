@@ -52,6 +52,11 @@ class SessionViewModel: ObservableObject {
     let cameraManager = CameraManager()
     let rayBanManager = RayBanManager()
     private var cancellables = Set<AnyCancellable>()
+    private var glassesUploadStreamID: String?
+    private var glassesUploadSequence = 0
+    private var glassesUploadGeneration = 0
+    private var glassesUploadInFlight = false
+    private var lastGlassesUploadAt: Date?
 
     init(config: ClaudeConfig = ClaudeConfig.load()) {
         self.config = config
@@ -76,6 +81,19 @@ class SessionViewModel: ObservableObject {
             .sink { [weak self] status in
                 guard let self, self.activeFrameSource == .rayBan else { return }
                 self.frameSourceStatus = status
+                if status.isConnected {
+                    self.startGlassesFrameUploadStreamIfReady()
+                } else {
+                    self.stopGlassesFrameUploadStream()
+                }
+            }
+            .store(in: &cancellables)
+
+        rayBanManager.$latestFrame
+            .compactMap { $0 }
+            .receive(on: RunLoop.main)
+            .sink { [weak self] frame in
+                self?.uploadGlassesFrameIfReady(frame)
             }
             .store(in: &cancellables)
 
@@ -127,6 +145,7 @@ class SessionViewModel: ObservableObject {
                     AudioSessionManager.shared.setGlassesCameraStreaming(self.activeFrameSource == .rayBan)
                     try? AudioSessionManager.shared.configureForVoiceChat()
                     self.startActiveFrameSource()
+                    self.startGlassesFrameUploadStreamIfReady()
                 }
             }
         }
@@ -134,6 +153,7 @@ class SessionViewModel: ObservableObject {
         bridge.onDisconnect = { [weak self] in
             Task { @MainActor in
                 self?.state = .disconnected
+                self?.stopGlassesFrameUploadStream()
             }
         }
     }
@@ -190,6 +210,7 @@ class SessionViewModel: ObservableObject {
 
     func connect() async {
         errorMessage = nil
+        stopGlassesFrameUploadStream()
         bridge.disconnect()
         bridge.mode = connectionMode
 
@@ -208,6 +229,7 @@ class SessionViewModel: ObservableObject {
                 AudioSessionManager.shared.setGlassesCameraStreaming(activeFrameSource == .rayBan)
                 try? AudioSessionManager.shared.configureForVoiceChat()
                 startActiveFrameSource()
+                startGlassesFrameUploadStreamIfReady()
             } catch {
                 bridge.isConnected = false
                 errorMessage = error.localizedDescription
@@ -231,6 +253,7 @@ class SessionViewModel: ObservableObject {
     }
 
     func disconnect() {
+        stopGlassesFrameUploadStream()
         speechManager.stopListening()
         speechManager.stopSpeaking()
         cameraManager.stop()
@@ -247,6 +270,7 @@ class SessionViewModel: ObservableObject {
     // MARK: - Frame Source
 
     private func switchFrameSource() {
+        stopGlassesFrameUploadStream()
         cameraManager.stop()
         rayBanManager.stop()
 
@@ -262,6 +286,63 @@ class SessionViewModel: ObservableObject {
             AudioSessionManager.shared.setGlassesCameraStreaming(false)
         }
         startActiveFrameSource()
+    }
+
+    private func startGlassesFrameUploadStreamIfReady() {
+        guard activeFrameSource == .rayBan,
+              isConnected,
+              rayBanManager.connectionStatus.isConnected else {
+            stopGlassesFrameUploadStream()
+            return
+        }
+        guard glassesUploadStreamID == nil else { return }
+        glassesUploadGeneration += 1
+        glassesUploadSequence = 0
+        lastGlassesUploadAt = nil
+        glassesUploadStreamID = UUID().uuidString
+        print("[Session] Glasses frame upload stream started")
+    }
+
+    private func stopGlassesFrameUploadStream() {
+        guard glassesUploadStreamID != nil || glassesUploadInFlight else { return }
+        glassesUploadGeneration += 1
+        glassesUploadStreamID = nil
+        glassesUploadSequence = 0
+        lastGlassesUploadAt = nil
+        print("[Session] Glasses frame upload stream stopped")
+    }
+
+    private func uploadGlassesFrameIfReady(_ frame: Data) {
+        guard activeFrameSource == .rayBan,
+              isConnected,
+              rayBanManager.connectionStatus.isConnected,
+              !glassesUploadInFlight else { return }
+        startGlassesFrameUploadStreamIfReady()
+        guard let streamID = glassesUploadStreamID else { return }
+        guard frame.count <= 1_048_576 else { return }
+
+        let now = Date()
+        if let lastGlassesUploadAt, now.timeIntervalSince(lastGlassesUploadAt) < 1.0 { return }
+
+        glassesUploadInFlight = true
+        lastGlassesUploadAt = now
+        let sequence = glassesUploadSequence
+        let generation = glassesUploadGeneration
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.bridge.uploadGlassesFrame(frame, streamID: streamID, sequence: sequence)
+                if self.glassesUploadGeneration == generation,
+                   self.glassesUploadStreamID == streamID,
+                   self.glassesUploadSequence == sequence {
+                    self.glassesUploadSequence += 1
+                }
+            } catch {
+                // Frames are intentionally not queued or retried; the next fresh frame may be sent.
+                print("[Session] Glasses frame upload failed: \(error.localizedDescription)")
+            }
+            self.glassesUploadInFlight = false
+        }
     }
 
     private func startActiveFrameSource() {

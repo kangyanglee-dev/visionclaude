@@ -211,6 +211,29 @@ class ClaudeBridge: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         print("[Bridge] Uploaded \(source) image (\(image.count / 1024)KB)")
     }
 
+    /// Publish one fresh Ray-Ban JPEG to the local gateway for on-demand MCP reads.
+    /// This route does not call an AI provider.
+    func uploadGlassesFrame(_ image: Data, streamID: String, sequence: Int) async throws {
+        guard !config.channelToken.isEmpty else { throw ClaudeBridgeError.missingGatewayToken }
+        guard image.count <= 1_048_576 else { throw ClaudeBridgeError.frameTooLarge }
+        guard let url = config.baseURL?.appendingPathComponent("glasses/frame") else {
+            throw ClaudeBridgeError.invalidGatewayAddress
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
+        request.setValue(config.channelToken, forHTTPHeaderField: "X-Gateway-Key")
+        request.setValue(streamID, forHTTPHeaderField: "X-Glasses-Stream-Id")
+        request.setValue(String(sequence), forHTTPHeaderField: "X-Frame-Sequence")
+        request.httpBody = image
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw ClaudeBridgeError.invalidResponse
+        }
+    }
+
     // MARK: - Gateway Mode (REST fallback)
 
     func chatREST(text: String, images: [Data] = []) async throws -> ChatResponse {
@@ -302,6 +325,7 @@ class ClaudeBridge: NSObject, ObservableObject, URLSessionWebSocketDelegate {
 enum ClaudeBridgeError: LocalizedError {
     case invalidResponse
     case invalidGatewayAddress
+    case frameTooLarge
     case missingGatewayToken
     case serverError(statusCode: Int, message: String)
 
@@ -311,6 +335,8 @@ enum ClaudeBridgeError: LocalizedError {
             return "Invalid response from server"
         case .invalidGatewayAddress:
             return "Enter a hostname or IP address only, without http:// or a path"
+        case .frameTooLarge:
+            return "Glasses frame exceeds the 1 MB gateway limit"
         case .missingGatewayToken:
             return "Enter the gateway key in Channel Token settings"
         case .serverError(let code, let message):
