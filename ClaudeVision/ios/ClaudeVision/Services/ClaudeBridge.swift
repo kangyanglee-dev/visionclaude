@@ -45,7 +45,10 @@ class ClaudeBridge: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         isManualDisconnect = false
         reconnectAttempts = 0
 
-        let wsURL = config.wsURL
+        guard let wsURL = config.wsURL else {
+            onStatus?("invalid configuration")
+            return
+        }
         print("[Bridge] Connecting WebSocket")
 
         let session = URLSession(configuration: .default, delegate: self, delegateQueue: .main)
@@ -170,7 +173,9 @@ class ClaudeBridge: NSObject, ObservableObject, URLSessionWebSocketDelegate {
 
     /// Upload image via HTTP multipart (for large images, avoids base64 bloat over WS)
     func uploadImage(text: String, image: Data, source: String = "iphone") async throws {
-        let url = URL(string: "http://\(config.gatewayHost):\(config.gatewayPort)/upload")!
+        guard let url = config.baseURL?.appendingPathComponent("upload") else {
+            throw ClaudeBridgeError.invalidGatewayAddress
+        }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         if !config.channelToken.isEmpty {
@@ -213,7 +218,10 @@ class ClaudeBridge: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         let base64Images = images.map { $0.base64EncodedString() }
         let request = ChatRequest(text: text, images: base64Images, conversation_id: conversationId)
 
-        var urlRequest = URLRequest(url: config.chatURL)
+        guard let chatURL = config.chatURL else {
+            throw ClaudeBridgeError.invalidGatewayAddress
+        }
+        var urlRequest = URLRequest(url: chatURL)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue(config.channelToken, forHTTPHeaderField: "X-Gateway-Key")
@@ -233,7 +241,10 @@ class ClaudeBridge: NSObject, ObservableObject, URLSessionWebSocketDelegate {
 
     func checkHealth() async throws -> HealthResponse {
         guard !config.channelToken.isEmpty else { throw ClaudeBridgeError.missingGatewayToken }
-        var request = URLRequest(url: config.healthURL)
+        guard let healthURL = config.healthURL else {
+            throw ClaudeBridgeError.invalidGatewayAddress
+        }
+        var request = URLRequest(url: healthURL)
         request.setValue(config.channelToken, forHTTPHeaderField: "X-Gateway-Key")
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
@@ -290,6 +301,7 @@ class ClaudeBridge: NSObject, ObservableObject, URLSessionWebSocketDelegate {
 
 enum ClaudeBridgeError: LocalizedError {
     case invalidResponse
+    case invalidGatewayAddress
     case missingGatewayToken
     case serverError(statusCode: Int, message: String)
 
@@ -297,6 +309,8 @@ enum ClaudeBridgeError: LocalizedError {
         switch self {
         case .invalidResponse:
             return "Invalid response from server"
+        case .invalidGatewayAddress:
+            return "Enter a hostname or IP address only, without http:// or a path"
         case .missingGatewayToken:
             return "Enter the gateway key in Channel Token settings"
         case .serverError(let code, let message):

@@ -10,22 +10,37 @@ struct ClaudeConfig: Codable {
     var elevenLabsVoiceId: String = "21m00Tcm4TlvDq8ikWAM" // Rachel (default)
     var channelToken: String = ""
 
-    var baseURL: URL {
-        URL(string: "http://\(gatewayHost):\(gatewayPort)")!
+    var baseURL: URL? {
+        guard let host = normalizedGatewayHost else { return nil }
+        var components = URLComponents()
+        components.scheme = "http"
+        components.host = host
+        components.port = gatewayPort
+        return components.url
     }
 
-    var wsURL: URL {
+    var wsURL: URL? {
+        guard let host = normalizedGatewayHost else { return nil }
         var comps = URLComponents()
         comps.scheme = "ws"
-        comps.host = gatewayHost
+        comps.host = host
         comps.port = gatewayPort
         comps.path = "/ws"
-        return comps.url!
+        return comps.url
     }
 
-    var chatURL: URL { baseURL.appendingPathComponent("chat") }
-    var healthURL: URL { baseURL.appendingPathComponent("health") }
-    var toolsURL: URL { baseURL.appendingPathComponent("tools") }
+    var chatURL: URL? { baseURL?.appendingPathComponent("chat") }
+    var healthURL: URL? { baseURL?.appendingPathComponent("health") }
+    var toolsURL: URL? { baseURL?.appendingPathComponent("tools") }
+
+    private var normalizedGatewayHost: String? {
+        let host = gatewayHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !host.isEmpty,
+              !host.contains("://"),
+              !host.contains("/"),
+              !host.contains(" ") else { return nil }
+        return host
+    }
 
     // MARK: - Persistence
 

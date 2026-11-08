@@ -192,6 +192,12 @@ class SessionViewModel: ObservableObject {
         bridge.disconnect()
         bridge.mode = connectionMode
 
+        if connectionMode == .channel && config.wsURL == nil {
+            errorMessage = ClaudeBridgeError.invalidGatewayAddress.localizedDescription
+            state = .disconnected
+            return
+        }
+
         if connectionMode == .gateway {
             do {
                 let health = try await bridge.checkHealth()
